@@ -26,14 +26,15 @@ h1,h2,p{margin:0}h1{font-size:clamp(19px,5vw,29px);letter-spacing:-.065em}
 .toolbar p{font-size:12px;color:var(--muted);line-height:1.4}
 .pill,.primary{border:1px solid var(--rim);border-radius:9px;background:var(--paper);padding:8px 10px;font-size:12px;font-weight:700;min-height:36px;white-space:nowrap}
 .primary{background:var(--green);color:#fff9ed;border-color:var(--green);padding:10px 15px;font-size:14px}
-.targets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:0;margin:0;gap:6px;list-style:none}
+.targets{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(70px,calc((100% - 18px)/4));gap:6px;margin:0;padding:0 0 5px;list-style:none;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:#9b8e75 #e7dec9}
+.targets:focus-visible{outline:2px solid #a66c20;outline-offset:2px}
+.targets.compact{grid-auto-columns:minmax(70px,calc((100% - 24px)/4.4))}
 .target{position:relative;text-align:center;background:var(--paper);border:1px solid var(--rim);border-radius:10px;padding:6px 2px;font-size:clamp(10px,2.9vw,13px);font-weight:700;min-width:0;line-height:1.18;word-break:keep-all;overflow-wrap:anywhere}
 .target img{display:block;width:clamp(33px,10vw,53px);height:clamp(33px,10vw,53px);margin:0 auto 4px;object-fit:contain}
 .target.found{background:#e5ecdf;border-color:#9baa91}.target.found img{opacity:.65}.check{position:absolute;right:4px;top:4px;border-radius:100%;background:var(--green);color:white;width:18px;line-height:18px;font-size:12px}
 
 
 .phase-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:8px}
-.targets.six{grid-template-columns:repeat(3,minmax(0,1fr))}
 .targets.compact .target img{width:clamp(29px,8vw,42px);height:clamp(29px,8vw,42px)}
 .home-cover{position:relative;overflow:hidden;border:1px solid #967a5e;border-radius:16px;margin:12px 0 10px;min-height:220px;height:clamp(220px,36svh,340px);isolation:isolate;background:#473424}
 .home-cover img{width:100%;height:100%;position:absolute;inset:0;object-fit:cover;object-position:50% 43%;z-index:-2}
@@ -86,7 +87,7 @@ h1,h2,p{margin:0}h1{font-size:clamp(19px,5vw,29px);letter-spacing:-.065em}
       <div class="zoom" aria-label="그림 확대 조절"><button id="minus" aria-label="축소">−</button><button id="plus" aria-label="확대">+</button><button id="fit">전체</button></div>
     </div>
     <div class="toolbar"><p id="instructions">그림에서 물건을 눌러 찾으세요.<br>두 손가락으로 확대할 수 있어요.</p><button class="pill" id="hint">구역 힌트 <span id="hint-count"></span></button></div>
-    <ul aria-label="찾을 물건" class="targets" id="targets"></ul>
+    <ul aria-label="찾을 물건" class="targets" id="targets" tabindex="0"></ul>
     <div class="phase-actions">
       <button class="pill" id="phase-action" hidden></button>
       <button class="primary" id="next-round" hidden></button>
@@ -238,14 +239,17 @@ function render() {
   const canAdvance = phaseUnlocked(next * 2);
   find('next-round').hidden = !canAdvance;
   find('next-round').textContent = canAdvance ? `${stages[next].title} 가기` : '';
-  find('targets').className = count === 6 ? 'targets six compact' : count > 4 ? 'targets compact' : 'targets';
-  find('targets').replaceChildren(...phases[state.phase].map(item => {
+  const targets = find('targets');
+  const trayOffset = targets.scrollLeft;
+  targets.classList.toggle('compact', count > 4);
+  targets.replaceChildren(...phases[state.phase].map(item => {
     const found = state.found[state.phase].includes(item.id);
     const tile = document.createElement('li');
     tile.className = found ? 'target found' : 'target';
     const icon = new Image();
     icon.src = item.icon;
     icon.alt = '';
+    icon.draggable = false;
     tile.append(icon, item.name);
     if (found) {
       const check = document.createElement('span');
@@ -259,6 +263,7 @@ function render() {
     }
     return tile;
   }));
+  targets.scrollLeft = trayOffset;
 }
 
 function renderHome() {
@@ -325,6 +330,7 @@ function enterPhase(phase) {
   if (phase !== state.phase) {
     const previousStage = stageIndex();
     state.phase = phase;
+    find('targets').scrollLeft = 0;
     hintCursor = 0;
     clearHint();
     if (previousStage !== stageIndex()) mountStage();
