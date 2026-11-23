@@ -34,7 +34,7 @@ h1,h2,p{margin:0}h1{font-size:clamp(19px,5vw,29px);letter-spacing:-.065em}
 .target.found{background:#e5ecdf;border-color:#9baa91}.target.found img{opacity:.65}.check{position:absolute;right:4px;top:4px;border-radius:100%;background:var(--green);color:white;width:18px;line-height:18px;font-size:12px}
 
 
-.phase-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:8px}
+.round-actions{display:flex;justify-content:flex-end;margin-top:8px}
 .targets.compact .target img{width:clamp(29px,8vw,42px);height:clamp(29px,8vw,42px)}
 .home-cover{position:relative;overflow:hidden;border:1px solid #967a5e;border-radius:16px;margin:12px 0 10px;min-height:220px;height:clamp(220px,36svh,340px);isolation:isolate;background:#473424}
 .home-cover img{width:100%;height:100%;position:absolute;inset:0;object-fit:cover;object-position:50% 43%;z-index:-2}
@@ -81,15 +81,14 @@ h1,h2,p{margin:0}h1{font-size:clamp(19px,5vw,29px);letter-spacing:-.065em}
     <div class="stage-list" id="stage-list"></div>
   </section>
   <section id="game-screen" aria-labelledby="location-title" hidden>
-    <div class="location"><h2 id="location-title" tabindex="-1">나뭇잎 우체국</h2><p><span id="phase-label"></span> · <strong id="progress"></strong></p></div>
+    <div class="location"><h2 id="location-title" tabindex="-1">나뭇잎 우체국</h2><p><strong id="progress"></strong></p></div>
     <div class="scene" id="scene">
       <div class="world" id="world"><img id="art" alt="" draggable="false"></div>
       <div class="zoom" aria-label="그림 확대 조절"><button id="minus" aria-label="축소">−</button><button id="plus" aria-label="확대">+</button><button id="fit">전체</button></div>
     </div>
     <div class="toolbar"><p id="instructions">그림에서 물건을 눌러 찾으세요.<br>두 손가락으로 확대할 수 있어요.</p><button class="pill" id="hint">구역 힌트 <span id="hint-count"></span></button></div>
     <ul aria-label="찾을 물건" class="targets" id="targets" tabindex="0"></ul>
-    <div class="phase-actions">
-      <button class="pill" id="phase-action" hidden></button>
+    <div class="round-actions">
       <button class="primary" id="next-round" hidden></button>
     </div>
     <p id="status" class="sr" role="status"></p>
@@ -98,7 +97,7 @@ h1,h2,p{margin:0}h1{font-size:clamp(19px,5vw,29px);letter-spacing:-.065em}
   <section id="album-screen" aria-labelledby="album-title" hidden>
     <h2 class="list-heading" id="album-title" tabindex="-1">엽서 보기</h2>
     <div id="postcards"></div>
-    <p id="album-empty">장소의 첫 방문을 마치면 엽서를 받습니다.</p>
+    <p id="album-empty">장소의 물건을 모두 찾으면 엽서를 받습니다.</p>
   </section>
 </main>
 <script src="./tea-room.js"></script>
@@ -119,33 +118,32 @@ const stages = [
   placeSceneObjects(mossGarden, gardenPlacement, 'brightness(.93) saturate(.85) sepia(.04)'),
   placeSceneObjects(fireflyStop, stopPlacement, 'brightness(.84) saturate(.85) sepia(.15)'),
 ];
-const phases = stages.flatMap(stage => [stage.items.slice(0, stage.count), stage.items.slice(stage.count)]);
 let artSize = stages[0];
 const find = id => document.getElementById(id);
 const scene = find('scene');
 const world = find('world');
 let screen = 'home';
-const saveKey = 'forest-postcards.post-office.v1';
+const saveKey = 'forest-postcards.post-office.v2';
+const legacySaveKey = 'forest-postcards.post-office.v1';
 const hintLimit = 3;
 const maxScale = 3;
-let state = { phase: 0, found: phases.map(() => []), hints: phases.map(() => 0) };
+const state = { stage: 0, found: stages.map(() => []), hints: stages.map(() => 0), legacyPostcards: 0 };
 let camera = { width: 0, height: 0, scale: 1, x: 0, y: 0 };
 let hintMarker;
 let hintCursor = 0;
 const objects = new Map();
 
-function stageIndex() {
-  return Math.floor(state.phase / 2);
+function stageUnlocked(index) {
+  return Boolean(stages[index]) &&
+    stages.slice(state.legacyPostcards, index).every((_, offset) => complete(state.legacyPostcards + offset));
 }
 
-function phaseUnlocked(phase) {
-  if (!phases[phase]) return false;
-  if (phase % 2 === 1) return phaseUnlocked(phase - 1) && complete(phase - 1);
-  return phase === 0 || (phaseUnlocked(phase - 2) && complete(phase - 2));
+function earnedPostcard(index) {
+  return index < state.legacyPostcards || complete(index);
 }
 
 function mountStage() {
-  artSize = stages[stageIndex()];
+  artSize = stages[state.stage];
   const art = find('art');
   art.src = artSize.art;
   art.alt = artSize.alt;
@@ -182,26 +180,47 @@ function mountStage() {
 }
 
 function renderObjects() {
-  const found = state.found[state.phase];
+  const found = state.found[state.stage];
   for (const item of artSize.items) {
     const isFound = found.includes(item.id);
     objects.get(item.id).hidden = item.patch ? !isFound : isFound;
   }
 }
 
+function sanitizeHints(value) {
+  return Number.isInteger(value) ? Math.max(0, Math.min(value, hintLimit)) : 0;
+}
+
+function readFound(value) {
+  return new Set(Array.isArray(value) ? value : []);
+}
+
 function load() {
   try {
-    const stored = JSON.parse(localStorage.getItem(saveKey));
+    const current = JSON.parse(localStorage.getItem(saveKey));
+    const stored = current ?? JSON.parse(localStorage.getItem(legacySaveKey));
     if (!stored) return;
-    state.found = phases.map((phase, index) => phase
-      .filter(item => stored.found?.[index]?.includes?.(item.id)).map(item => item.id));
-    state.hints = phases.map((_, index) => {
-      const value = stored.hints?.[index];
-      return Number.isInteger(value) ? Math.max(0, Math.min(value, hintLimit)) : 0;
+
+    if (current) state.legacyPostcards = Number.isInteger(stored.legacyPostcards)
+      ? Math.max(0, Math.min(stored.legacyPostcards, stages.length)) : 0;
+
+    stages.forEach(({ items, count }, index) => {
+      const slot = current ? index : index * 2;
+      const first = readFound(stored.found?.[slot]);
+      const second = readFound(current ? undefined : stored.found?.[slot + 1]);
+      state.found[index] = items.filter(({ id }) => first.has(id) || second.has(id)).map(({ id }) => id);
+      const firstHints = sanitizeHints(stored.hints?.[slot]);
+      const secondHints = current ? 0 : sanitizeHints(stored.hints?.[slot + 1]);
+      state.hints[index] = Math.min(hintLimit, firstHints + secondHints);
+
+      // Old saves earned the postcard and the next location after the first half.
+      if (!current && index === state.legacyPostcards && items.slice(0, count).every(({ id }) => first.has(id))) {
+        state.legacyPostcards++;
+      }
     });
-    if (Number.isInteger(stored.phase) && phases[stored.phase] && phaseUnlocked(stored.phase)) {
-      state.phase = stored.phase;
-    }
+
+    const index = current ? stored.stage : Math.floor(stored.phase / 2);
+    if (Number.isInteger(index) && stageUnlocked(index)) state.stage = index;
   } catch {
     find('save-warning').hidden = false;
   }
@@ -215,35 +234,30 @@ function save() {
   }
 }
 
-function complete(phase) {
-  return state.found[phase].length === phases[phase].length;
+function complete(index) {
+  return state.found[index].length === stages[index].items.length;
 }
 
 function render() {
-  const done = complete(state.phase);
-  const revisit = state.phase % 2 === 1;
-  const count = phases[state.phase].length;
+  const done = complete(state.stage);
+  const count = artSize.items.length;
   renderObjects();
   find('location-title').textContent = artSize.title;
-  find('phase-label').textContent = revisit ? '재방문' : '첫 방문';
-  find('progress').textContent = `${state.found[state.phase].length}/${count}`;
-  find('hint-count').textContent = `${hintLimit - state.hints[state.phase]}/${hintLimit}`;
-  find('hint').disabled = done || state.hints[state.phase] >= hintLimit;
+  find('progress').textContent = `${state.found[state.stage].length}/${count}`;
+  find('hint-count').textContent = `${hintLimit - state.hints[state.stage]}/${hintLimit}`;
+  find('hint').disabled = done || state.hints[state.stage] >= hintLimit;
   find('instructions').innerHTML = done
-    ? (revisit ? '이곳의 물건을 모두 찾았어요.' : '엽서가 앨범에 도착했어요.')
+    ? '모든 물건을 찾았어요. 엽서 앨범에서 이 장소를 볼 수 있어요.'
     : '그림에서 물건을 눌러 찾으세요.<br>두 손가락으로 확대할 수 있어요.';
-  find('phase-action').hidden = !done || revisit || complete(state.phase + 1);
-  find('phase-action').textContent = state.found[state.phase + 1]?.length
-    ? '재방문 이어하기' : '재방문 시작';
-  const next = stageIndex() + 1;
-  const canAdvance = phaseUnlocked(next * 2);
+  const next = state.stage + 1;
+  const canAdvance = done && next < stages.length;
   find('next-round').hidden = !canAdvance;
   find('next-round').textContent = canAdvance ? `${stages[next].title} 가기` : '';
   const targets = find('targets');
   const trayOffset = targets.scrollLeft;
   targets.classList.toggle('compact', count > 4);
-  targets.replaceChildren(...phases[state.phase].map(item => {
-    const found = state.found[state.phase].includes(item.id);
+  targets.replaceChildren(...artSize.items.map(item => {
+    const found = state.found[state.stage].includes(item.id);
     const tile = document.createElement('li');
     tile.className = found ? 'target found' : 'target';
     const icon = new Image();
@@ -267,13 +281,12 @@ function render() {
 }
 
 function renderHome() {
-  const postcardCount = stages.filter((_, index) => complete(index * 2)).length;
+  const postcardCount = stages.filter((_, index) => earnedPostcard(index)).length;
   find('album-count').textContent = `${postcardCount}/${stages.length}`;
   const hasProgress = state.found.some(found => found.length) || state.hints.some(Boolean);
   find('continue').textContent = hasProgress ? '이어하기' : '시작하기';
   find('stage-list').replaceChildren(...stages.map((stage, index) => {
-    const first = index * 2;
-    const unlocked = phaseUnlocked(first);
+    const unlocked = stageUnlocked(index);
     const card = document.createElement('button');
     card.className = 'stage-card';
     card.disabled = !unlocked;
@@ -284,15 +297,15 @@ function renderHome() {
     const label = document.createElement('span');
     label.textContent = stage.title;
     const detail = document.createElement('small');
-    detail.textContent = !unlocked ? '잠김' : complete(first + 1) ? '완료'
-      : complete(first) ? '재방문' : state.found[first].length ? '진행 중' : '입장';
+    detail.textContent = !unlocked ? '잠김' : complete(index) ? '완료'
+      : state.found[index].length ? '진행 중' : '입장';
     card.append(thumb, label, detail);
     return card;
   }));
 }
 
 function renderAlbum() {
-  const earned = stages.filter((_, index) => complete(index * 2));
+  const earned = stages.filter((_, index) => earnedPostcard(index));
   find('postcards').replaceChildren(...earned.map(stage => {
     const card = document.createElement('article');
     const photo = new Image();
@@ -325,25 +338,17 @@ function showScreen(next, moveFocus = true) {
   if (moveFocus) find(heading).focus();
 }
 
-function enterPhase(phase) {
-  if (!phaseUnlocked(phase)) return;
-  if (phase !== state.phase) {
-    const previousStage = stageIndex();
-    state.phase = phase;
+function visitStage(index) {
+  if (!stageUnlocked(index)) return;
+  if (index !== state.stage) {
+    state.stage = index;
     find('targets').scrollLeft = 0;
     hintCursor = 0;
     clearHint();
-    if (previousStage !== stageIndex()) mountStage();
+    mountStage();
     save();
   }
   showScreen('game');
-}
-
-function visitStage(index) {
-  const first = index * 2;
-  if (!phaseUnlocked(first)) return;
-  const phase = index === stageIndex() ? state.phase : complete(first) ? first + 1 : first;
-  enterPhase(phase);
 }
 
 function bound(value, min, max) {
@@ -402,12 +407,12 @@ function showEffect(point, correct) {
 }
 
 function tap(point) {
-  if (complete(state.phase)) return;
+  if (complete(state.stage)) return;
   const x = ((point.x - camera.x) / (camera.width * camera.scale)) * artSize.width;
   const y = ((point.y - camera.y) / (camera.height * camera.scale)) * artSize.height;
   if (x < 0 || y < 0 || x > artSize.width || y > artSize.height) return;
-  const item = phases[state.phase].find(({ id, hit: [left, top, right, bottom] }) => {
-    if (state.found[state.phase].includes(id) || x < left || x > right || y < top || y > bottom) return false;
+  const item = artSize.items.find(({ id, hit: [left, top, right, bottom] }) => {
+    if (state.found[state.stage].includes(id) || x < left || x > right || y < top || y > bottom) return false;
     if (id !== 'quill') return true;
     const featherCenter = 769 + 0.56 * (x - 107);
     return Math.abs(y - featherCenter) <= (x < 225 ? 40 : 25);
@@ -416,12 +421,12 @@ function tap(point) {
     showEffect(point, false);
     return;
   }
-  state.found[state.phase].push(item.id);
+  state.found[state.stage].push(item.id);
   if (hintMarker?.dataset.item === item.id) clearHint();
   save();
   render();
   showEffect(point, true);
-  find('status').textContent = `${item.name} 발견! ${state.found[state.phase].length}/${phases[state.phase].length}`;
+  find('status').textContent = `${item.name} 발견! ${state.found[state.stage].length}/${artSize.items.length}`;
 }
 
 function clearHint() {
@@ -431,10 +436,10 @@ function clearHint() {
 
 function hint() {
   if (find('hint').disabled) return;
-  const remaining = phases[state.phase].filter(item => !state.found[state.phase].includes(item.id));
+  const remaining = artSize.items.filter(item => !state.found[state.stage].includes(item.id));
   const item = remaining[hintCursor % remaining.length];
   hintCursor += 1;
-  state.hints[state.phase] += 1;
+  state.hints[state.stage] += 1;
   save();
   render();
   clearHint();
@@ -449,7 +454,7 @@ function hint() {
   });
   world.append(marker);
   hintMarker = marker;
-  find('status').textContent = `힌트 구역은 ${item.area}입니다. 남은 힌트 ${hintLimit - state.hints[state.phase]}회.`;
+  find('status').textContent = `힌트 구역은 ${item.area}입니다. 남은 힌트 ${hintLimit - state.hints[state.stage]}회.`;
   setTimeout(() => {
     if (hintMarker === marker) clearHint();
   }, 3200);
@@ -518,9 +523,8 @@ find('hint').onclick = hint;
 find('home-art').src = sceneArt;
 find('home-button').onclick = () => showScreen('home');
 find('album-open').onclick = () => showScreen('album');
-find('continue').onclick = () => enterPhase(state.phase);
-find('phase-action').onclick = () => enterPhase(state.phase + 1);
-find('next-round').onclick = () => visitStage(stageIndex() + 1);
+find('continue').onclick = () => visitStage(state.stage);
+find('next-round').onclick = () => visitStage(state.stage + 1);
 new ResizeObserver(() => {
   if (screen === 'game') resetCamera();
 }).observe(scene);
